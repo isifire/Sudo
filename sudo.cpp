@@ -1,76 +1,77 @@
 #include <iostream>
-#include <sys/types.h>
-#include <unistd.h>
 #include <fstream>
-#include <sys/wait.h>
 #include <cstring>
-#include <string>
 #include <pwd.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 using namespace std;
 
-bool compruebaSudoers(){
+bool compruebaSudoers(const string& username) {
+    ifstream fichero("sudoersfinal.txt");
+    if (!fichero.is_open()) {
+        cerr << "Error: No se pudo abrir el archivo sudoersfinal.txt\n";
+        exit(EXIT_FAILURE);
+    }
 
-	//
-	uid_t user = getuid();
-
-	ifstream fichero("sudoersfinal.txt");
-
-		if(!fichero.is_open()){
-			cout << "El fichero no existe\n";
-			exit(1);
-		}
-
-	int uid;
-	string username;
-
-	while(fichero >> username){
-		uid = getpwnam(username.c_str())->pw_uid;
-		if(uid == user){
-			return true;
-		}
-	}
-	return false;
+    string line;
+    while (getline(fichero, line)) {
+        if (line == username) {
+            return true;
+        }
+    }
+    return false;
 }
 
-int main (int argc, char * argv[]){
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        cerr << "Uso: " << argv[0] << " [-u usuario] comando [argumentos...]\n";
+        exit(EXIT_FAILURE);
+    }
 
-	if(argc<2){
-	   cout << "No has introducido ningun programa a ejecutar por el sudo\n";
-	   exit(1);
-	}
+    string username;
+    if (strcmp(argv[1], "-u") == 0) {
+        if (argc < 4) {
+            cerr << "Error: Se esperaba el nombre de usuario después de '-u'\n";
+            exit(EXIT_FAILURE);
+        }
+        username = argv[2];
+        argv += 2; // Avanzar los argumentos para ejecutar el comando correcto
+    } else {
+        // Obtener el nombre de usuario actual
+        struct passwd *pw = getpwuid(getuid());
+        if (pw == nullptr) {
+            cerr << "Error: No se pudo obtener el nombre de usuario\n";
+            exit(EXIT_FAILURE);
+        }
+        username = pw->pw_name;
+    }
 
-	if(strcmp(argv[1],"-u")== 0){
-		if(geteuid() == 0){
-			int uid_login = getpwnam(argv[2])->pw_uid;
-			seteuid(uid_login);
-			execvp(argv[3],argv+3);
-			cout << "ERROR: el comando no es correcto \n";
-			exit(1);
-		}
+    // Verificar si el usuario tiene permisos de sudo
+    if (!compruebaSudoers(username)) {
+        cerr << "Error: El usuario " << username << " no tiene permisos para usar sudo\n";
+        exit(EXIT_FAILURE);
+    }
 
-		else{
-		cout << "ERROR: el usuario no tiene uid 0\n";
-		exit(1);
-		}
+    // Cambiar el ID de usuario efectivo a 0 solo si se usa la opción -u
+    if (strcmp(argv[1], "-u") == 0) {
+        struct passwd *pw = getpwnam(username.c_str());
+        if (pw == nullptr) {
+            cerr << "Error: No se encontró el usuario " << username << endl;
+            exit(EXIT_FAILURE);
+        }
+        if (seteuid(pw->pw_uid) == -1) {
+            perror("Error al cambiar el ID de usuario efectivo");
+            exit(EXIT_FAILURE);
+        }
+    }
 
-	}
+    // Ejecutar el comando
+    if (execvp(argv[1], argv + 1) == -1) {
+        perror("Error al ejecutar el comando");
+        exit(EXIT_FAILURE);
+    }
 
-	uid_t user;
-	user = getuid();
-
-	if(compruebaSudoers()){
-	        seteuid(0);
-		   execvp(argv[1],argv+1);
-			cout << "Error el comando no existe \n";
-			exit(1);
-	}
-
-	else{
-	   cout << "El usuario con uid "<< user << " no esta en el fichero sudoers\n";
-	   exit(1);
-	}
-
-return 0;
-
+    return 0;
 }
